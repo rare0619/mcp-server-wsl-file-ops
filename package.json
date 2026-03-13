@@ -1,0 +1,26 @@
+{
+  "name": "mcp-server-wsl-file-ops",
+  "version": "1.0.0",
+  "description": "MCP Server for WSL file operations - provides file read/write, search, and command execution tools",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.0",
+    "glob": "^11.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.10.0",
+    "fast-check": "^3.23.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT"
+}

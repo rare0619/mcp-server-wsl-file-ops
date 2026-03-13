@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "wsl-file-ops": {
+      "command": "node",
+      "args": [
+        "/data/mcp-server-wsl-file-ops/dist/index.js",
+        "/data/your-project-1",
+        "/data/your-project-2"
+      ],
+      "env": {
+        "COMMAND_WHITELIST": "npm *,git *,node *,npx *,ls *,cat *,head *,tail *,grep *,find *,wc *,echo *,pwd,whoami,date,which *,file *",
+        "COMMAND_TIMEOUT": "30000",
+        "MAX_SEARCH_RESULTS": "500"
+      },
+      "disabled": false,
+      "autoApprove": ["read_file", "list_directory", "search_files"]
+    }
+  }
+}
