@@ -30,9 +30,10 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  // 输出启动信息到 stderr（stdout 保留给 JSON-RPC）
+  // 输出启动信息和配置摘要到 stderr（stdout 保留给 JSON-RPC）
   console.error('[wsl-file-ops] MCP Server 已启动');
-  console.error(`[wsl-file-ops] 允许的目录: ${config.allowedDirectories.join(', ')}`);
+  console.error(`[wsl-file-ops] 允许的目录 (${config.allowedDirectories.length}): ${config.allowedDirectories.join(', ')}`);
+  console.error(`[wsl-file-ops] 白名单条目: ${config.commandWhitelist.length}, 超时: ${config.commandTimeout}ms, 搜索上限: ${config.maxSearchResults}`);
 }
 
 // 捕获未处理的异常

@@ -1,4 +1,4 @@
-import { parseConfig, DEFAULT_COMMAND_WHITELIST, ServerConfig } from './config';
+import { parseConfig, parseWhitelist, DEFAULT_COMMAND_WHITELIST, ServerConfig } from './config';
 
 describe('配置解析模块', () => {
   const originalEnv = process.env;
@@ -46,7 +46,7 @@ describe('配置解析模块', () => {
       expect(config.commandWhitelist).toEqual(DEFAULT_COMMAND_WHITELIST);
     });
 
-    it('应从环境变量 COMMAND_WHITELIST 解析命令白名单', () => {
+    it('应从环境变量 COMMAND_WHITELIST 解析逗号分隔的命令白名单', () => {
       process.env.COMMAND_WHITELIST = 'npm *,git *,node *';
       const config = parseConfig(['/data/project']);
       expect(config.commandWhitelist).toEqual(['npm *', 'git *', 'node *']);
@@ -71,8 +71,10 @@ describe('配置解析模块', () => {
 
     it('COMMAND_TIMEOUT 为非数字时应使用默认值', () => {
       process.env.COMMAND_TIMEOUT = 'invalid';
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
       const config = parseConfig(['/data/project']);
       expect(config.commandTimeout).toBe(30000);
+      mockStderrWrite.mockRestore();
     });
 
     it('未设置 MAX_SEARCH_RESULTS 时应使用默认值 500', () => {
@@ -90,6 +92,129 @@ describe('配置解析模块', () => {
       process.env.MAX_SEARCH_RESULTS = 'abc';
       const config = parseConfig(['/data/project']);
       expect(config.maxSearchResults).toBe(500);
+    });
+
+    // === 新增测试用例 ===
+
+    it('空字符串 COMMAND_WHITELIST 应使用默认白名单', () => {
+      process.env.COMMAND_WHITELIST = '';
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const config = parseConfig(['/data/project']);
+      expect(config.commandWhitelist).toEqual(DEFAULT_COMMAND_WHITELIST);
+      expect(mockStderrWrite).toHaveBeenCalledWith(
+        expect.stringContaining('COMMAND_WHITELIST 为空字符串'),
+      );
+      mockStderrWrite.mockRestore();
+    });
+
+    it('JSON 数组格式 COMMAND_WHITELIST 应正确解析', () => {
+      process.env.COMMAND_WHITELIST = '["npm *","git *"]';
+      const config = parseConfig(['/data/project']);
+      expect(config.commandWhitelist).toEqual(['npm *', 'git *']);
+    });
+
+    it('以 [ 开头但无效 JSON 应回退逗号分隔解析', () => {
+      process.env.COMMAND_WHITELIST = '[invalid json,npm *';
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const config = parseConfig(['/data/project']);
+      // 回退到逗号分隔：'[invalid json' 和 'npm *'
+      expect(config.commandWhitelist).toContain('npm *');
+      expect(mockStderrWrite).toHaveBeenCalledWith(
+        expect.stringContaining('JSON 解析失败'),
+      );
+      mockStderrWrite.mockRestore();
+    });
+
+    it('JSON 数组包含非字符串元素应忽略非字符串', () => {
+      process.env.COMMAND_WHITELIST = '["npm *", 123, "git *", null]';
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const config = parseConfig(['/data/project']);
+      expect(config.commandWhitelist).toEqual(['npm *', 'git *']);
+      expect(mockStderrWrite).toHaveBeenCalledWith(
+        expect.stringContaining('非字符串元素'),
+      );
+      mockStderrWrite.mockRestore();
+    });
+
+    it('COMMAND_TIMEOUT 为 0 应使用默认值', () => {
+      process.env.COMMAND_TIMEOUT = '0';
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const config = parseConfig(['/data/project']);
+      expect(config.commandTimeout).toBe(30000);
+      expect(mockStderrWrite).toHaveBeenCalledWith(
+        expect.stringContaining('不是有效的正整数'),
+      );
+      mockStderrWrite.mockRestore();
+    });
+
+    it('COMMAND_TIMEOUT 为负数应使用默认值', () => {
+      process.env.COMMAND_TIMEOUT = '-5000';
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const config = parseConfig(['/data/project']);
+      expect(config.commandTimeout).toBe(30000);
+      expect(mockStderrWrite).toHaveBeenCalledWith(
+        expect.stringContaining('不是有效的正整数'),
+      );
+      mockStderrWrite.mockRestore();
+    });
+
+    it('应输出配置摘要到 stderr', () => {
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      parseConfig(['/data/project1', '/data/project2']);
+      expect(mockStderrWrite).toHaveBeenCalledWith(
+        expect.stringContaining('配置摘要'),
+      );
+      expect(mockStderrWrite).toHaveBeenCalledWith(
+        expect.stringContaining('允许目录=2个'),
+      );
+      mockStderrWrite.mockRestore();
+    });
+  });
+
+  describe('parseWhitelist', () => {
+    it('undefined 应返回默认白名单', () => {
+      const result = parseWhitelist(undefined);
+      expect(result).toEqual(DEFAULT_COMMAND_WHITELIST);
+    });
+
+    it('空字符串应返回默认白名单', () => {
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const result = parseWhitelist('');
+      expect(result).toEqual(DEFAULT_COMMAND_WHITELIST);
+      mockStderrWrite.mockRestore();
+    });
+
+    it('逗号分隔字符串应正确解析', () => {
+      const result = parseWhitelist('npm *,git *,node *');
+      expect(result).toEqual(['npm *', 'git *', 'node *']);
+    });
+
+    it('JSON 数组字符串应正确解析', () => {
+      const result = parseWhitelist('["npm *","git *","node *"]');
+      expect(result).toEqual(['npm *', 'git *', 'node *']);
+    });
+
+    it('无效 JSON 应回退逗号分隔', () => {
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const result = parseWhitelist('[broken');
+      // 回退逗号分隔，'[broken' 作为单个条目
+      expect(result).toEqual(['[broken']);
+      expect(mockStderrWrite).toHaveBeenCalledWith(
+        expect.stringContaining('JSON 解析失败'),
+      );
+      mockStderrWrite.mockRestore();
+    });
+
+    it('JSON 数组中非字符串元素应被过滤', () => {
+      const mockStderrWrite = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const result = parseWhitelist('["ls *", 42, true, "grep *"]');
+      expect(result).toEqual(['ls *', 'grep *']);
+      mockStderrWrite.mockRestore();
+    });
+
+    it('应 trim 每个条目并过滤空字符串', () => {
+      const result = parseWhitelist(' npm * , , git * ');
+      expect(result).toEqual(['npm *', 'git *']);
     });
   });
 

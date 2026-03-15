@@ -1,6 +1,6 @@
 /**
  * 命令守卫单元测试
- * 验证白名单匹配、危险命令检测、命令消毒和综合检查逻辑
+ * 验证白名单匹配、危险命令检测、命令消毒、管道命令支持和综合检查逻辑
  */
 
 import { CommandGuard, DANGEROUS_KEYWORDS } from './command-guard.js';
@@ -100,31 +100,127 @@ describe('CommandGuard', () => {
 
     it('检测分号注入', () => {
       expect(() => guard.sanitizeCommand('ls; rm -rf /')).toThrow(
-        '检测到 shell 元字符注入',
+        '检测到 shell 元字符注入 (;)',
       );
     });
 
     it('检测 && 注入', () => {
       expect(() => guard.sanitizeCommand('echo hello && rm -rf /')).toThrow(
-        '检测到 shell 元字符注入',
+        '检测到 shell 元字符注入 (&&)',
       );
     });
 
     it('检测 || 注入', () => {
       expect(() => guard.sanitizeCommand('false || rm -rf /')).toThrow(
-        '检测到 shell 元字符注入',
+        '检测到 shell 元字符注入 (||)',
       );
     });
 
-    it('检测管道注入', () => {
-      expect(() => guard.sanitizeCommand('cat file | sh')).toThrow(
-        '检测到 shell 元字符注入',
+    it('检测反引号注入', () => {
+      expect(() => guard.sanitizeCommand('echo `whoami`')).toThrow(
+        '检测到 shell 元字符注入 (`)',
       );
+    });
+
+    it('检测 $() 注入', () => {
+      expect(() => guard.sanitizeCommand('echo $(whoami)')).toThrow(
+        '检测到 shell 元字符注入 ($())',
+      );
+    });
+
+    it('管道命令允许通过', () => {
+      // 管道不再被 sanitizeCommand 拒绝
+      expect(guard.sanitizeCommand('cat file | sh')).toBe('cat file | sh');
+      expect(guard.sanitizeCommand('grep foo file | head -10')).toBe('grep foo file | head -10');
+      expect(guard.sanitizeCommand('cat file | grep foo | head -10')).toBe('cat file | grep foo | head -10');
     });
 
     it('安全命令正常返回', () => {
       expect(guard.sanitizeCommand('ls -la')).toBe('ls -la');
       expect(guard.sanitizeCommand('  pwd  ')).toBe('pwd');
+    });
+  });
+
+  describe('splitPipeline', () => {
+    it('拆分单管道命令', () => {
+      const result = guard.splitPipeline('grep foo file | head -10');
+      expect(result.isPipeline).toBe(true);
+      expect(result.commands).toEqual(['grep foo file', 'head -10']);
+    });
+
+    it('拆分多管道命令', () => {
+      const result = guard.splitPipeline('cat file | grep foo | head -10');
+      expect(result.isPipeline).toBe(true);
+      expect(result.commands).toEqual(['cat file', 'grep foo', 'head -10']);
+    });
+
+    it('非管道命令', () => {
+      const result = guard.splitPipeline('ls -la');
+      expect(result.isPipeline).toBe(false);
+      expect(result.commands).toEqual(['ls -la']);
+    });
+
+    it('子命令自动 trim', () => {
+      const result = guard.splitPipeline('  grep foo  |  head -10  ');
+      expect(result.commands).toEqual(['grep foo', 'head -10']);
+    });
+
+    it('空命令拆分', () => {
+      const result = guard.splitPipeline('');
+      expect(result.isPipeline).toBe(false);
+      expect(result.commands).toEqual(['']);
+    });
+  });
+
+  describe('checkPipelineCommand', () => {
+    it('单管道命令通过白名单检查', () => {
+      const result = guard.checkPipelineCommand('grep foo file | head -10');
+      expect(result.allowed).toBe(true);
+    });
+
+    it('多管道命令通过白名单检查', () => {
+      const result = guard.checkPipelineCommand('cat file | grep foo | head -10');
+      expect(result.allowed).toBe(true);
+    });
+
+    it('管道中包含非白名单命令被拒绝', () => {
+      const result = guard.checkPipelineCommand('cat file | sh');
+      expect(result.allowed).toBe(false);
+      expect(result.failedCommandIndex).toBe(1);
+      expect(result.failedCommand).toBe('sh');
+      expect(result.requiresAuth).toBe(true);
+    });
+
+    it('管道中包含危险命令被拒绝', () => {
+      const result = guard.checkPipelineCommand('cat file | rm -rf /');
+      expect(result.allowed).toBe(false);
+      expect(result.dangerousKeywords).toContain('rm -rf');
+      expect(result.requiresAuth).toBe(true);
+    });
+
+    it('第一个子命令不在白名单时拒绝', () => {
+      const result = guard.checkPipelineCommand('npm install | grep success');
+      expect(result.allowed).toBe(false);
+      expect(result.failedCommandIndex).toBe(0);
+      expect(result.failedCommand).toBe('npm install');
+    });
+
+    it('非管道白名单命令通过', () => {
+      const result = guard.checkPipelineCommand('ls -la');
+      expect(result.allowed).toBe(true);
+    });
+
+    it('系统目录工作目录拒绝', () => {
+      const result = guard.checkPipelineCommand('ls -la', '/etc');
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('系统关键目录');
+    });
+
+    it('failedCommandIndex 和 failedCommand 正确指向第一个失败子命令', () => {
+      const result = guard.checkPipelineCommand('cat file | npm run | docker ps');
+      expect(result.allowed).toBe(false);
+      expect(result.failedCommandIndex).toBe(1);
+      expect(result.failedCommand).toBe('npm run');
     });
   });
 
@@ -157,7 +253,7 @@ describe('CommandGuard', () => {
       const result = guard.checkCommand('npm install');
       expect(result.allowed).toBe(false);
       expect(result.requiresAuth).toBe(true);
-      expect(result.reason).toBe('命令不在白名单中');
+      expect(result.reason).toContain('不在白名单中');
     });
 
     it('危险命令优先级高于白名单', () => {
@@ -171,6 +267,17 @@ describe('CommandGuard', () => {
     it('正常工作目录不影响白名单命令', () => {
       const result = guard.checkCommand('ls -la', '/data/project');
       expect(result.allowed).toBe(true);
+    });
+
+    it('管道命令通过 checkCommand 检查', () => {
+      const result = guard.checkCommand('grep foo file | head -10');
+      expect(result.allowed).toBe(true);
+    });
+
+    it('管道中非白名单命令通过 checkCommand 拒绝', () => {
+      const result = guard.checkCommand('cat file | sh');
+      expect(result.allowed).toBe(false);
+      expect(result.requiresAuth).toBe(true);
     });
   });
 });
